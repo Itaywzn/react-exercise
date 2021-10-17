@@ -1,182 +1,141 @@
-import React, { useState, useEffect } from 'react';
-import {
-  BrowserRouter as Router,
-  Switch,
-  Route,
-  Link
-} from "react-router-dom";
-import AppBar from '@mui/material/AppBar';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Toolbar from '@mui/material/Toolbar';
-import Typography from '@mui/material/Typography';
-import IconButton from '@mui/material/IconButton';
-import MenuIcon from '@mui/icons-material/Menu';
-import AddIcon from '@mui/icons-material/Add';
-import Drawer from '@mui/material/Drawer';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemText from '@mui/material/ListItemText';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Paper from '@mui/material/Paper';
-
+import React, {useCallback, useEffect, useState} from 'react';
+import {BrowserRouter as Router, Route, Switch,} from "react-router-dom";
 import './App.css';
+import {Customers} from "./pages/Customers";
+import {Packages} from "./pages/Packages";
+import {AppMenu} from "./AppMenu";
+import {getWeightFromText} from "./dataHelpers";
+import {Invoices} from "./pages/Invoices";
+import {CustomerInvoice} from "./pages/CustomerInvoice";
+
 
 function App() {
+    const [appData, setAppData] = useState({customers: [], packages: []});
+    const [invoices, setInvoices] = useState({});
+    const [newPackIdGen, setNewPackIdGen] = useState(1);
 
-  const [appData, setAppData] = useState({ customers: [], packages: [] });
-  const [invoices, setInvoices] = useState([]);
+    const handleCustomerDelete = useCallback(
+        (customerId) => {
+            const filteredCustomers = appData.customers.filter(customer => customer.id !== customerId);
+            setAppData({...appData, customers: filteredCustomers})
+            const newInvoices ={...invoices}
+            delete newInvoices[customerId]
+            setInvoices(newInvoices)
+    }, [appData,invoices])
 
-  fetch("/data.json").then(response => response.json())
-  .then(data => { setAppData(data) });
+    const handlePackageDelete = useCallback(
+        (packageItem) => {
+            const filteredPackages = appData.packages.filter(item => item.id !== packageItem.id);
+            setAppData({...appData, packages:filteredPackages})
+            const customerPackagesData = invoices[packageItem.customerid];
+            customerPackagesData.packages = customerPackagesData.packages
+                .filter(item => item.id !== packageItem.id);
+            customerPackagesData.totalWeight -= getWeightFromText(packageItem.weight);
+            customerPackagesData.totalPrice -= packageItem.price;
+            setInvoices(invoices)
+        }, [invoices, appData])
 
+    const handlePackageAdd = useCallback(
+        (pack) => {
+            const packageItem = {...pack, id:`Npack${newPackIdGen}`}
+            setNewPackIdGen((prev)=>prev+1)
+            setAppData({...appData, packages:[...appData.packages, packageItem] })
+            const newInvoices = {...invoices};
+            const customerPackagesData =
+                newInvoices[packageItem.customerid] || {customerName:packageItem.customerName,totalWeight: 0, totalPrice: 0,packages:[] };
+            customerPackagesData.packages.push(packageItem);
+            customerPackagesData.totalWeight += packageItem.weight;
+            customerPackagesData.totalPrice += packageItem.price;
+            newInvoices[packageItem.customerid] =customerPackagesData;
+            setInvoices(newInvoices)
+        }, [newPackIdGen, appData, invoices])
 
-  return (
-    <div className="App">
-      <Router>
-        <Box sx={{ flexGrow: 1 }}>
-          <AppBar position="static">
-            <Toolbar>
-              <IconButton
-                size="large"
-                edge="start"
-                color="inherit"
-                aria-label="menu"
-                sx={{ mr: 2 }}
-              >
-                <MenuIcon />
-              </IconButton>
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                Mail Delivery Service
-              </Typography>
+    const sortPackages = (packages) => {
+       return packages.sort((a, b) => a.shippingOrder - b.shippingOrder);
+    }
 
-            </Toolbar>
-          </AppBar>
-        </Box>
-        <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 650 }} aria-label="simple table">
-            <TableHead>
-              <TableRow>
+    const handlePackagesSortChange = useCallback(
+        (oldVal, newVal) => {
+            const {packages} = appData;
+            const targetPackage = packages.find(item => item.shippingOrder=== oldVal);
+            const replacementPackage = packages.find(item => item.shippingOrder=== newVal);
+            targetPackage.shippingOrder = newVal;
+            replacementPackage.shippingOrder = oldVal;
+            const newPackages = sortPackages(packages);
+            setAppData({...appData ,packages:newPackages})
+        }
+    , [appData])
 
-                <TableCell >id</TableCell>
-                <TableCell >Name</TableCell>
-                <TableCell ></TableCell>
-                <TableCell ></TableCell>
+    const [dataLoaded, setDataLoaded] = useState(false);
+    useEffect(() => {
+        async function fetchData() {
+            try {
+                const response = await fetch("/data.json");
+                const {packages,customers } = await response.json();
+                const invoices = packages?.reduce((acc, item) => {
+                    const customerInvoice = acc[item.customerid] || {customerName:'',totalWeight: 0, totalPrice: 0,packages:[] };
+                    const packagesByCustomer = customerInvoice.packages;
+                    packagesByCustomer.push(item);
+                    if (!customerInvoice.customerName){
+                        const customer =  customers.find((customer)=> customer.id === item.customerid)
+                        customerInvoice.customerName = customer.name;
+                    }
+                    customerInvoice.packages = packagesByCustomer;
+                    customerInvoice.totalWeight += getWeightFromText(item.weight);
+                    customerInvoice.totalPrice += item.price;
+                    acc[item.customerid] = customerInvoice;
+                    return acc;
+                }, {})
+                setAppData({packages:sortPackages(packages) ,customers })
+                setInvoices(invoices)
+                setDataLoaded(true)
+            } catch (e) {
+                console.error(e)
+            }
 
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {appData.customers.map((row) => {
+        }
 
-                return (
-                  <TableRow
-                    sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
-                  >
-                    <TableCell component="th" scope="row">
-                      {row.id}
-                    </TableCell>
-                    <TableCell >{row.name}</TableCell>
-                    <TableCell ><Button variant="contained">Create Invoice</Button></TableCell>
-                    <TableCell ><Button variant="contained">Delete</Button></TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
+        fetchData();
+    }, [dataLoaded])
+    if (!dataLoaded) return (<div style={{ marginLeft: '50%' }}>loading</div>)
+    return (
+        <div className="App">
+            <Router>
+                <AppMenu/>
+                <Switch>
+                    <Route exact path={'/customers'}
+                           component={() => <Customers
+                               customers={appData.customers}
+                               onCustomerDelete={handleCustomerDelete}
+                           />}
+                    />
+                    <Route exact path={'/packages'}
+                           component={() => <Packages
+                               onPackageDelete={handlePackageDelete}
+                               onPackagesSortChange={handlePackagesSortChange}
+                               packages={appData.packages}
+                               customers={appData.customers}
+                               invoicesByCustomerId={invoices}
+                               onPackageAdd={handlePackageAdd}
+                           />}
+                    />
+                    <Route exact path={'/invoices'}
+                           component={() => <Invoices
+                               invoices={invoices}
+                           />}
+                    />
+                    <Route exact path={'/invoice/:customerId'}
+                           component={() => <CustomerInvoice
+                               invoices={invoices}
+                               customers={appData.customers}
+                           />}
+                    />
+                    <Route/>
+                </Switch>
+            </Router>
+        </div>
 
-        <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 650 }} aria-label="simple table">
-            <TableHead>
-              <TableRow>
-                <TableCell>id</TableCell>
-                <TableCell>Customer Name</TableCell>
-                <TableCell>Weight</TableCell>
-                <TableCell>Price</TableCell>
-              
-                <TableCell>
-                  <IconButton
-                    size="large"
-                    edge="start"
-                    color="inherit"
-                    aria-label="menu"
-                  >
-                    <AddIcon />
-                  </IconButton></TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {appData.packages.map((row) => {
-
-                return (
-                  <TableRow
-                    sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
-                  >
-                    <TableCell component="th" scope="row">
-                      {row.id}
-                    </TableCell>
-                    <TableCell >{row.weight}</TableCell>
-
-                    <TableCell ></TableCell>
-                    <TableCell >{row.price}</TableCell>
-                    <TableCell ><Button variant="contained">Delete</Button><i>Up down buttons should go here</i></TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-
-        <TableContainer component={Paper}>
-          <Table sx={{ minWidth: 650 }} aria-label="simple table">
-            <TableHead>
-              <TableRow>                
-                <TableCell>Customer Name</TableCell>
-                <TableCell>Total Weight</TableCell>
-                <TableCell>Total Price</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {invoices.map((row) => {
-
-                return (
-                  <TableRow
-                    sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
-                  >
-                  
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        <Drawer
-          anchor={"left"}
-          open={false}
-          onClose={() => { }}
-
-        >
-          <List style={{ width: "300px" }}>
-            <ListItem button>
-              <ListItemText primary={"Packages"} />
-            </ListItem>
-            <ListItem button>
-              <ListItemText primary={"Customers"} />
-            </ListItem>
-            <ListItem button>
-              <ListItemText primary={"Invoices"} />
-            </ListItem>
-          </List>
-        </Drawer>
-      </Router>
-    </div>
-
-  );
+    );
 }
 
 export default App;
